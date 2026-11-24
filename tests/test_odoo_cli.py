@@ -25,7 +25,8 @@ class CliTest(unittest.TestCase):
             "ODOO_PROTOCOL": "xmlrpc", "ODOO_HERMES_HOME": self.tmp.name, "HERMES_HOME": self.tmp.name,
         }
         self._old = {k: os.environ.get(k) for k in list(self.env) + ["ODOO_HERMES_ALLOW_WRITES", "ODOO_API_KEY",
-                                                                     "ODOO_HERMES_ALLOWED_METHODS", "ODOO_HERMES_MAX_WRITE"]}
+                                                                     "ODOO_HERMES_ALLOWED_METHODS", "ODOO_HERMES_MAX_WRITE",
+                                                                     "ODOO_HERMES_MARKER"]}
         for k in self._old:
             os.environ.pop(k, None)
         os.environ.update(self.env)
@@ -214,6 +215,83 @@ class CliTest(unittest.TestCase):
         code, out, _ = self.run_cli("call", "res.partner", "search_count", "--kwargs", '{"domain": []}')
         self.assertEqual(code, 0)
         self.assertNotIn("unlink", self.methods_called())
+
+    # ------------------------------------------------------- MadeByHermes
+    def messages_on(self, model, rid):
+        return [m["body"] for m in self.fake.data["mail.message"].values()
+                if m["model"] == model and m["res_id"] == rid]
+
+    def test_marker_appended_in_internal_field(self):
+        self.writes_on()
+        code, out, _ = self.run_cli("--json", "create", "res.partner", "--set", "name=Marked")
+        self.assertIn("marker 'MadeByHermes' added in field comment", json.loads(out)["notes"])
+        code, out, err = self.run_cli("--json", "create", "res.partner", "--set", "name=Marked",
+                                      "--set", "comment=<p>Met at a fair</p>", "--apply")
+        self.assertEqual(code, 0, err)
+        rid = json.loads(out)["ids"][0]
+        self.assertEqual(self.fake.data["res.partner"][rid]["comment"], "<p>Met at a fair</p><p>MadeByHermes</p>")
+        self.assertEqual(self.messages_on("res.partner", rid), [])  # field used, no chatter note
+
+    def test_marker_not_duplicated(self):
+        odoo_cli.HERMES_MARKER = "MadeByHermes"  # global is otherwise whatever the last main() set
+        vals = {"comment": "x MadeByHermes"}
+        odoo_cli.add_marker(vals, "comment", "html")
+        self.assertEqual(vals["comment"], "x MadeByHermes")
+        vals = {"comment": "line"}
+        odoo_cli.add_marker(vals, "comment", "text")
+        self.assertEqual(vals["comment"], "line\nMadeByHermes")
+
+    def test_marker_goes_to_chatter_not_printed_terms(self):
+        self.writes_on()
+        code, out, _ = self.run_cli("--json", "create", "sale.order", "--set", "name=SO1")
+        self.assertIn("marker 'MadeByHermes' will be posted as an internal chatter note", json.loads(out)["notes"])
+        self.assertNotIn("message_post", self.methods_called())  # dry-run posts nothing
+        code, out, err = self.run_cli("--json", "create", "sale.order", "--set", "name=SO1", "--apply")
+        self.assertEqual(code, 0, err)
+        rid = json.loads(out)["ids"][0]
+        self.assertNotIn("note", self.fake.data["sale.order"][rid])  # terms & conditions untouched
+        self.assertEqual(self.messages_on("sale.order", rid), ["MadeByHermes"])
+        post = [c for c in self.fake.calls if c[1] == "message_post"][-1]
+        self.assertEqual((post[3]["message_type"], post[3]["subtype_xmlid"]), ("comment", "mail.mt_note"))
+
+    def test_marker_failure_does_not_fail_creation(self):
+        self.writes_on()
+        original = self.fake.execute_kw
+
+        def failing(db, uid, pwd, model, method, args, kw):
+            if method == "message_post":
+                raise fake_odoo.xmlrpc.client.Fault(1, "chatter down")
+            return original(db, uid, pwd, model, method, args, kw)
+        self.fake.execute_kw = failing
+        code, out, err = self.run_cli("--json", "create", "sale.order", "--set", "name=SO2", "--apply")
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertIn(data["ids"][0], self.fake.data["sale.order"])
+        self.assertTrue(any("could not post marker" in n for n in data["notes"]))
+
+    def test_marker_on_activity(self):
+        self.writes_on()
+        code, out, err = self.run_cli("activity", "res.partner", "1", "--summary", "Call", "--note", "<p>Ask</p>", "--apply")
+        self.assertEqual(code, 0, err)
+        act = list(self.fake.data["mail.activity"].values())[-1]
+        self.assertEqual(act["note"], "<p>Ask</p><p>MadeByHermes</p>")
+
+    def test_marker_configurable_and_disabled(self):
+        self.writes_on()
+        os.environ["ODOO_HERMES_MARKER"] = ""
+        code, out, err = self.run_cli("--json", "create", "res.partner", "--set", "name=Plain", "--apply")
+        data = json.loads(out)
+        self.assertNotIn("comment", self.fake.data["res.partner"][data["ids"][0]])
+        self.assertFalse(any("marker" in n for n in data["notes"]))
+
+    def test_marker_read_from_hermes_env_file(self):
+        # Must be honoured even though it is only in ~/.hermes/.env (loaded by Config()).
+        self.writes_on()
+        Path(self.tmp.name, ".env").write_text("ODOO_HERMES_MARKER=ByOurBot\n")
+        code, out, err = self.run_cli("--json", "create", "res.partner", "--set", "name=EnvMarked", "--apply")
+        self.assertEqual(code, 0, err)
+        rid = json.loads(out)["ids"][0]
+        self.assertEqual(self.fake.data["res.partner"][rid]["comment"], "<p>ByOurBot</p>")
 
     def test_export_never_overwrites(self):
         target = Path(self.tmp.name) / "out.csv"

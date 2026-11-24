@@ -10,6 +10,7 @@ FIELDS = {
         "email": {"type": "char", "string": "Email"},
         "phone": {"type": "char", "string": "Phone"},
         "zip": {"type": "char", "string": "Zip"},
+        "comment": {"type": "html", "string": "Notes"},
         "active": {"type": "boolean", "string": "Active"},
         "is_company": {"type": "boolean", "string": "Is company"},
         "type": {"type": "selection", "string": "Type", "selection": [["contact", "Contact"], ["invoice", "Invoice"]]},
@@ -28,6 +29,13 @@ FIELDS = {
                      "message_type": {"type": "char"}, "subtype_id": {"type": "many2one", "relation": "mail.message.subtype"},
                      "tracking_value_ids": {"type": "one2many", "relation": "mail.tracking.value"}},
     "ir.model": {"model": {"type": "char"}, "name": {"type": "char"}},
+    # `note` = terms and conditions printed on the customer PDF: must never get the marker.
+    "sale.order": {"name": {"type": "char", "string": "Order"}, "display_name": {"type": "char"},
+                   "partner_id": {"type": "many2one", "relation": "res.partner"},
+                   "note": {"type": "html", "string": "Terms and conditions"},
+                   "message_ids": {"type": "one2many", "relation": "mail.message"}},
+    "mail.activity.type": {"name": {"type": "char"}, "display_name": {"type": "char"}},
+    "ir.model.data": {"module": {"type": "char"}, "name": {"type": "char"}, "res_id": {"type": "integer"}},
     "mail.activity": {"res_model_id": {"type": "many2one", "relation": "ir.model"}, "res_id": {"type": "integer"},
                       "summary": {"type": "char"}, "date_deadline": {"type": "date"},
                       "user_id": {"type": "many2one", "relation": "res.users"},
@@ -55,6 +63,9 @@ class FakeOdoo:
             "mail.message": {},
             "ir.model": {1: {"model": "res.partner", "name": "Contact"}},
             "mail.activity": {},
+            "sale.order": {},
+            "mail.activity.type": {1: {"name": "To-Do"}},
+            "ir.model.data": {1: {"module": "mail", "name": "mail_activity_data_todo", "res_id": 1}},
         }
 
     # ---------------- helpers

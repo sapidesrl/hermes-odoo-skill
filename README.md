@@ -37,6 +37,9 @@ Les garde-fous sont **dans le code**, pas seulement dans les consignes données 
 6. **Plafond anti-modification de masse** – 25 enregistrements par opération par défaut.
 7. **Relations sûres** – les many2many/one2many ne font qu'*ajouter* ; vider/supprimer est refusé.
 8. **Actions métier sur liste blanche** – `action_confirm` & co. seulement si vous les autorisez.
+9. **Marqueur `MadeByHermes`** – tout ce que Hermes crée est marqué, dans une note interne
+   (jamais dans un champ imprimé pour le client, comme les conditions générales d'un devis) ;
+   texte modifiable ou désactivable via `ODOO_HERMES_MARKER`.
 
 Détails : [`skills/odoo/references/safety.md`](skills/odoo/references/safety.md).
 
@@ -57,6 +60,7 @@ ODOO_API_KEY=xxxxxxxxxxxxxxxx         # Odoo > Mon profil > Sécurité du compte
 # ODOO_DB=monentreprise               # seulement si plusieurs bases (Odoo Online : auto-détecté)
 # ODOO_HERMES_ALLOW_WRITES=1          # activer les écritures (prévisualisées, journalisées, annulables)
 # ODOO_HERMES_ALLOWED_METHODS=action_confirm
+# ODOO_HERMES_MARKER=MadeByHermes     # marqueur des enregistrements créés (vide = désactivé)
 ```
 
 Conseil : créez un **utilisateur Odoo dédié** (« Hermes ») avec des droits limités — c'est la

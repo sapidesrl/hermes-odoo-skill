@@ -1266,6 +1266,58 @@ def _names(client, model, ids):
         return {i: "" for i in ids}
 
 
+# "MadeByHermes" marker: every record created by the CLI is tagged, in the
+# most relevant place and NEVER in a field printed for the customer.
+# Re-read in main() after Config() has loaded ~/.hermes/.env.
+HERMES_MARKER = os.environ.get("ODOO_HERMES_MARKER", "MadeByHermes")
+
+# Internal-note fields, checked on a real Odoo 19.0+e instance.
+MARKER_FIELDS = {
+    "res.partner": "comment", "crm.lead": "description",
+    "project.project": "description", "project.task": "description",
+    "product.template": "description", "product.product": "description",
+    "hr.employee": "additional_note", "mail.activity": "note",
+    "planning.slot": "name", "note.note": "memo",
+}
+MARKER_FALLBACK_FIELDS = ("note", "notes", "description", "comment", "additional_note")
+
+
+def marker_plan(meta, model):
+    """Where the marker goes: ("field", name) | ("chatter", None) | (None, None).
+
+    Chatter comes before the generic fallback on purpose: on sale.order,
+    account.move or purchase.order, `note` / `narration` hold the terms and
+    conditions printed on the customer PDF.
+    """
+    if not HERMES_MARKER:
+        return None, None
+    name = MARKER_FIELDS.get(model)
+    f = meta.get(name) if name else None
+    if f and not f.get("readonly") and f.get("type") in ("char", "text", "html"):
+        return "field", name
+    if "message_ids" in meta:
+        return "chatter", None
+    for name in MARKER_FALLBACK_FIELDS:
+        f = meta.get(name)
+        if f and not f.get("readonly") and f.get("type") in ("text", "html"):
+            return "field", name
+    return None, None
+
+
+def add_marker(vals, field, ftype):
+    """Append the marker after any existing content (never replace it), once."""
+    current = vals.get(field)
+    current = current if isinstance(current, str) else ""
+    if HERMES_MARKER in current:
+        return
+    if ftype == "html":
+        vals[field] = current + "<p>%s</p>" % html.escape(HERMES_MARKER)
+    elif ftype == "text":
+        vals[field] = current + "\n" + HERMES_MARKER if current else HERMES_MARKER
+    else:
+        vals[field] = current + " " + HERMES_MARKER if current else HERMES_MARKER
+
+
 def cmd_create(client, cfg, args):
     check_model_writable(cfg, args.model)
     if args.values and args.values.strip().startswith("["):
@@ -1285,6 +1337,16 @@ def cmd_create(client, cfg, args):
         vals, n = prepare_vals(client, args.model, raw)
         prepared.append(vals)
         notes += n
+    mkind, mfield = marker_plan(meta, args.model)
+    if HERMES_MARKER:
+        if mkind == "field":
+            for vals in prepared:
+                add_marker(vals, mfield, meta[mfield]["type"])
+            notes.append("marker '%s' added in field %s" % (HERMES_MARKER, mfield))
+        elif mkind == "chatter":
+            notes.append("marker '%s' will be posted as an internal chatter note" % HERMES_MARKER)
+        else:
+            notes.append("no place for marker '%s' on %s (no note field, no chatter)" % (HERMES_MARKER, args.model))
     required = [f for f, m in meta.items() if m.get("required") and not m.get("readonly")]
     defaults = {}
     try:
@@ -1309,6 +1371,13 @@ def cmd_create(client, cfg, args):
     check_apply_allowed(cfg)
     res = client.call(args.model, "create", vals_list=prepared)
     ids = res if isinstance(res, list) else [res]
+    if mkind == "chatter":
+        for rid in ids:
+            try:
+                client.call(args.model, "message_post", ids=[rid], body=HERMES_MARKER,
+                            message_type="comment", subtype_xmlid="mail.mt_note")
+            except OdooError as e:  # the record exists: a marker failure must not fail the creation
+                notes.append("could not post marker on #%s: %s" % (rid, e))
     entry = Journal(cfg).append({"op": "create", "model": args.model, "ids": ids, "values": prepared,
                                  "url": cfg.url, "db": client.db, "uid": client.uid, "note": args.reason})
     links = [client.link(args.model, i) for i in ids]
@@ -1459,6 +1528,8 @@ def cmd_activity(client, cfg, args):
             "date_deadline": due, "user_id": user_id}
     if args.note:
         vals["note"] = args.note
+    if HERMES_MARKER:
+        add_marker(vals, "note", "html")
     name = _names(client, args.model, [rid]).get(rid)
     data = {"target": "%s #%s %s" % (args.model, rid, name or ""), "values": vals}
     text = lambda: "Schedule activity on %s\n%s" % (data["target"], "\n".join("  %-16s %s" % (k, v) for k, v in vals.items()))
@@ -1742,6 +1813,9 @@ def main(argv=None):
         parser.print_help()
         return 2
     cfg = Config()
+    # Config() loads ~/.hermes/.env: read the marker only now, or a value set there would be ignored.
+    global HERMES_MARKER
+    HERMES_MARKER = os.environ.get("ODOO_HERMES_MARKER", "MadeByHermes")
     client = Client(cfg)
     try:
         if args.fn is not cmd_doctor and args.fn not in OFFLINE:

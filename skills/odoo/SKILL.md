@@ -37,7 +37,7 @@ without a preview, and every change you make can be traced and undone.
 ## Locate and run the CLI
 
 ```bash
-ODOO="python3 $(dirname "$(find ~/.hermes/skills -path '*odoo/scripts/odoo_cli.py' | head -1)")/odoo_cli.py"
+ODOO="python3 $(dirname "$(find "${HERMES_HOME:-$HOME/.hermes}/skills" -path '*odoo/scripts/odoo_cli.py' | head -1)")/odoo_cli.py"
 $ODOO doctor
 ```
 
@@ -83,6 +83,7 @@ try to work around it), `4` Odoo/network error.
 | Safe relations | many2many/one2many values only *add* links/lines; delete (2) and clear (5) commands are refused |
 | Allow-listed actions | Business methods (`action_confirm`...) only if the owner lists them in `ODOO_HERMES_ALLOWED_METHODS` |
 | Local files | `export` never overwrites an existing file |
+| Traceability | Every record created by `create` / `activity` carries the marker `MadeByHermes` (see below) |
 
 ## Command cheat-sheet
 
@@ -148,6 +149,16 @@ $ODOO journal --show a1b2c3d4
 $ODOO undo a1b2c3d4            # preview
 $ODOO undo a1b2c3d4 --apply
 ```
+
+## The MadeByHermes marker
+
+Records created by `create` and `activity` are tagged with `MadeByHermes` (setting
+`ODOO_HERMES_MARKER`, empty = off), always somewhere **internal, never printed for the customer**:
+the internal-notes field when the model has a known one (contact notes, lead/task description,
+activity note...), otherwise an internal chatter note (sale orders, invoices, purchase orders: their
+`note`/`narration` are the terms printed on the PDF), otherwise a generic notes field. The marker
+is appended after existing content, never replaces it. The dry-run `notes` say where it will go:
+mention it to the user. Users can find these records by searching `MadeByHermes`.
 
 ## Mini query language
 
