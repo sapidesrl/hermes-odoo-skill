@@ -1,0 +1,1 @@
+# hermes-odoo-skill
