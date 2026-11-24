@@ -228,7 +228,8 @@ class Client:
                 msg = err.get("message") or err.get("name") or body
             except ValueError:
                 pass
-            raise OdooError("HTTP %s on %s: %s" % (e.code, path, _shorten(msg, 400)))
+            raise OdooError("HTTP %s on %s: %s%s" % (e.code, path, _shorten(msg, 400),
+                                                     self._auth_hint() if e.code in (401, 403) else ""))
         except urllib.error.URLError as e:
             raise OdooError("Cannot reach %s: %s" % (self.url, e.reason))
         return json.loads(raw)
@@ -274,6 +275,14 @@ class Client:
                 continue
         return ""
 
+    def _auth_hint(self):
+        host = urllib.parse.urlsplit(self.url).hostname or ""
+        if not host.endswith(".odoo.com"):
+            return ""
+        return ("\nOdoo Online hints: (1) the external API is only available on the *Custom* pricing plan, "
+                "not on Standard or One App Free; (2) API keys expire after at most 3 months - generate a new one "
+                "in My Profile > Account Security; (3) use the login of the user who created the key.")
+
     def connect(self):
         missing = self.cfg.missing()
         if missing:
@@ -296,7 +305,8 @@ class Client:
             except (OSError, xmlrpc.client.ProtocolError) as e:
                 raise OdooError("Cannot reach %s: %s" % (self.url, e))
             if not uid:
-                raise OdooError("Authentication failed for %r on database %r." % (self.cfg.username, self.db))
+                raise OdooError("Authentication failed for %r on database %r.%s" % (
+                    self.cfg.username, self.db, self._auth_hint()))
             self.uid = uid
             self._obj = self._proxy("object")
         else:

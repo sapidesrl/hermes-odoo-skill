@@ -83,6 +83,19 @@ skills/odoo/
 tests/                       # faux serveur Odoo (XML-RPC + JSON-2) et tests
 ```
 
+## Odoo.com (Odoo Online) – formule Enterprise
+
+Le skill passe par l'**API externe officielle** d'Odoo, rien n'est à installer dans Odoo
+(Odoo Online n'accepte de toute façon pas les modules tiers).
+
+- ⚠️ Odoo ne donne accès à l'API externe que sur la formule **Personnalisé (Custom)**. Elle est
+  indisponible sur **Standard** et sur « Une application gratuite ». Vérifiez votre formule dans
+  votre abonnement odoo.com.
+- La base est détectée automatiquement depuis le sous-domaine (`monentreprise.odoo.com`).
+- Les versions Online (`saas~19.x`) utilisent automatiquement l'API JSON-2 avec la clé API.
+- Les clés API expirent au plus tard après **3 mois** : pensez à la renouveler (Mon profil >
+  Sécurité du compte) et à mettre à jour `ODOO_API_KEY`.
+
 ## Compatibilité
 
 - XML-RPC (Odoo 14 → 19) avec mot de passe ou clé API.

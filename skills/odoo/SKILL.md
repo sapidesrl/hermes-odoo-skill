@@ -190,6 +190,17 @@ and propose activities.
 **Bulk change** - always `count` first. If above the cap, split by a meaningful criterion and confirm
 each batch with the user; never loop over `--apply` silently.
 
+## Odoo Online (odoo.com)
+
+- Works out of the box: the database name is the subdomain (auto-detected) and recent
+  versions (`saas~19.x`) automatically use the JSON-2 API with the API key.
+- Odoo only opens the external API on the **Custom** pricing plan. On Standard or One App Free,
+  every call is refused: tell the user it is a plan limit, not a skill bug.
+- API keys last 3 months at most. When authentication suddenly fails, ask the user to generate
+  a new key (My Profile > Account Security) and update `ODOO_API_KEY`.
+- Third-party Odoo modules cannot be installed on Odoo Online, so this skill needs nothing
+  installed inside Odoo.
+
 ## Troubleshooting
 
 - `Missing configuration` - ask the user to set `ODOO_URL`, `ODOO_USERNAME`, `ODOO_API_KEY`
