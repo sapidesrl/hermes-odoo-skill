@@ -114,3 +114,8 @@ notamment que `unlink` n'est jamais appelé, que le dry-run n'écrit rien et que
 ## Licence
 
 MIT
+
+---
+
+Projet communautaire, non affilié à Odoo S.A. ni à Nous Research. « Odoo » est une marque
+d'Odoo S.A. ; « Hermes Agent » est un projet de Nous Research.
