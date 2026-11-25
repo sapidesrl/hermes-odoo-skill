@@ -474,6 +474,26 @@ class CliTest(unittest.TestCase):
         _, out, _ = self.run_cli("get", "res.partner", "2")
         self.assertIn("Peppol: (no Peppol address)", out)
 
+    def test_pulse_peppol_follow_up(self):
+        code, out, err = self.run_cli("pulse")
+        self.assertEqual(code, 0, err)
+        self.assertIn("[Peppol]", out)
+        self.assertRegex(out, r"sending errors\s+1: INV/2026/0002")
+        self.assertRegex(out, r"sent, awaiting reception\s+2")
+        self.assertRegex(out, r"ready to send, not sent yet\s+1")
+        self.assertFalse({"write", "create", "message_post"} & set(self.methods_called()))  # read-only
+        data = json.loads(self.run_cli("--json", "pulse")[1])
+        self.assertIn({"section": "Peppol", "metric": "sending errors", "value": "1: INV/2026/0002"}, data)
+
+    def test_pulse_without_peppol(self):
+        saved = fake_odoo.FIELDS["account.move"].pop("peppol_move_state")
+        try:
+            code, out, err = self.run_cli("pulse")
+        finally:
+            fake_odoo.FIELDS["account.move"]["peppol_move_state"] = saved
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Peppol", out)
+
     def test_export_never_overwrites(self):
         target = Path(self.tmp.name) / "out.csv"
         code, _, _ = self.run_cli("export", "res.partner", "--out", str(target))

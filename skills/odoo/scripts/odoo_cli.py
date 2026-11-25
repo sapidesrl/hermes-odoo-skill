@@ -1063,6 +1063,10 @@ def _sum_by_currency(rows, amount_field):
     return " + ".join(money(v, k) for k, v in totals.items()) or money(0)
 
 
+# account.move.peppol_move_state (account_peppol); the labels come from Odoo.
+PEPPOL_MOVE_STATES = ("ready", "to_send", "skipped", "processing", "done", "error")
+
+
 def cmd_pulse(client, cfg, args):
     """A business heartbeat: only modules that exist are queried."""
     today = dt.date.today().isoformat()
@@ -1096,6 +1100,28 @@ def cmd_pulse(client, cfg, args):
             return fn
         metric("Invoicing", "overdue customer invoices", overdue("out_invoice", "<", today))
         metric("Invoicing", "vendor bills due within 7 days", overdue("in_invoice", "<=", soon))
+        ameta = client.fields("account.move")
+        if "peppol_move_state" in ameta:  # account_peppol installed: read-only follow-up of sendings
+            sel = ameta["peppol_move_state"].get("selection")
+            keys = {k for k, _ in sel} if isinstance(sel, list) else set(PEPPOL_MOVE_STATES)
+            base = [["move_type", "in", ["out_invoice", "out_refund"]], ["state", "=", "posted"]]
+
+            def peppol(states, show_names=False):
+                states = [st for st in states if st in keys]
+
+                def fn():
+                    if not states:
+                        raise OdooError("state not available")
+                    dom = base + [["peppol_move_state", "in", states]]
+                    n = client.count("account.move", dom)
+                    if not (show_names and n):
+                        return n
+                    rows = client.search_read("account.move", dom, ["name"], limit=5, order="invoice_date desc, id desc")
+                    return "%d: %s%s" % (n, ", ".join(r.get("name") or "#%s" % r["id"] for r in rows), ", …" if n > 5 else "")
+                return fn
+            metric("Peppol", "sending errors", peppol(["error"], show_names=True))
+            metric("Peppol", "sent, awaiting reception", peppol(["to_send", "processing"]))
+            metric("Peppol", "ready to send, not sent yet", peppol(["ready"]))
     if client.has_model("crm.lead"):
         def pipe():
             rows = client.search_read("crm.lead", [["type", "=", "opportunity"]],

@@ -13,7 +13,7 @@ Un skill pour [Hermes Agent](https://github.com/NousResearch/hermes-agent) qui c
 | | |
 |---|---|
 | 🔎 **Explorer** | chercher n'importe quel enregistrement avec un mini-langage lisible (`name ~ acme, amount_total > 1000, date_order >= @month_start`), lire une fiche complète, compter, regrouper/agréger, recherche globale (`lookup`), historique du chatter |
-| 📈 **Pulse** | le « pouls » de l'entreprise en une commande : ventes du mois, devis ouverts, factures en retard, pipeline CRM, livraisons en retard, tâches en retard, tickets ouverts |
+| 📈 **Pulse** | le « pouls » de l'entreprise en une commande : ventes du mois, devis ouverts, factures en retard, envois Peppol en erreur / en attente, pipeline CRM, livraisons en retard, tâches en retard, tickets ouverts |
 | 👤 **Client 360** | tout sur un client sur un écran : coordonnées, dernières commandes, impayés, opportunités, tickets, activités, derniers messages |
 | ✅ **To-do** | mes activités en retard / du jour / à venir |
 | 📮 **Peppol** | vérifier si un client est joignable via Peppol (`peppol-check`, comme le bouton « Vérifier » d'Odoo) ; n'envoie rien |

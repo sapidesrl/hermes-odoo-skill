@@ -1,7 +1,7 @@
 ---
 name: odoo
 description: Connect to an Odoo ERP (v14 to v19+, Community, Enterprise or Odoo.sh/Online) and manage it safely - search and read any record, customer 360 views, business pulse, activities, chatter notes, and guarded create/update/archive with dry-run previews, a change journal and undo. Never deletes anything. Use whenever the user mentions Odoo, their ERP, CRM pipeline, quotations, sales orders, invoices, contacts, stock, projects or tasks stored in Odoo.
-version: 1.3.0
+version: 1.4.0
 author: Sapide SRL
 license: MIT
 platforms: [linux, macos, windows]
@@ -119,7 +119,7 @@ $ODOO export res.partner "customer_rank > 0" --fields name,email,phone --out cus
 
 ### Smart views (creative helpers, read-only)
 ```bash
-$ODOO pulse              # business heartbeat: sales this month, overdue invoices, pipeline, late deliveries, overdue tasks...
+$ODOO pulse              # business heartbeat: sales this month, overdue invoices, Peppol sending errors/pending, pipeline, late deliveries, overdue tasks...
 $ODOO todo --days 3      # my activities: LATE / today / upcoming
 $ODOO 360 "Acme Corp"    # customer 360: contact, last orders, unpaid invoices, opportunities, tickets, activities, messages
 $ODOO hygiene            # contact data-quality audit: missing emails/phones, duplicates, malformed emails
@@ -214,6 +214,12 @@ format), `not_valid` (not on Peppol), `not_valid_format` (on Peppol but does not
 e-invoice format), `not_verified` (not checked, or the contact's e-invoice format is not a Peppol one).
 A `valid` status does not mean the invoice is sent: sending stays done by the user in Odoo.
 Contacts without an EAS/endpoint are skipped: suggest the user fills them in on the contact form.
+
+**Peppol follow-up** - `pulse` shows, for posted customer invoices, the Peppol sending errors (with the
+first invoice numbers), those sent and awaiting reception, and those ready but not sent yet. For an error,
+run `history account.move <id>` to read the reason from the chatter and explain it; the user fixes and
+resends in Odoo. List them with `find account.move "peppol_move_state = error"`. Status values:
+`ready`, `to_send` (queued), `processing` (awaiting reception), `done` (received), `error`, `skipped`.
 
 **Dunning assistant** - find overdue invoices, group by partner, draft polite reminder emails
 **as text for the user to send**. Offer to log an internal `note` and an `activity` on each invoice
