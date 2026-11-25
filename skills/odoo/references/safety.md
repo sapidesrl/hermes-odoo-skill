@@ -15,7 +15,7 @@ API key for that user. Everything the skill does is logged in Odoo under that us
 |---|---|---|
 | `ODOO_HERMES_ALLOW_WRITES` | off | `1` allows writes. Without it the skill is strictly read-only. |
 | `ODOO_HERMES_MAX_WRITE` | `25` | Max records per write operation (hard ceiling 200). |
-| `ODOO_HERMES_ALLOWED_METHODS` | empty | Comma list of business methods the agent may call, e.g. `action_confirm,action_post`. |
+| `ODOO_HERMES_ALLOWED_METHODS` | empty | Comma list of business methods the agent may call, e.g. `action_confirm`. |
 | `ODOO_HERMES_PROTECTED_MODELS` | empty | Extra models to protect from any write, e.g. `hr.employee,product.pricelist`. |
 | `ODOO_HERMES_HOME` | `$HERMES_HOME/odoo` (`~/.hermes/odoo`) | Where the journal lives. |
 | `ODOO_HERMES_MARKER` | `MadeByHermes` | Text added to every record created by the skill; empty disables it. |
@@ -30,6 +30,10 @@ below cannot be disabled by configuration.
   `drop`, `reset`, `cancel`, `refund`, `reverse`, `void`, `revoke`, `remove`, `clear`, `merge`,
   `sudo`, `toggle_active`... are refused even if allow-listed. Raw `write`/`create` through `call`
   are refused too (they must go through the previewed commands).
+- No validation or sending of accounting documents: `action_post`, `button_post`,
+  `action_invoice_sent`, `action_send_and_print` and similar are refused even if
+  allow-listed. Invoices and credit notes created by the skill stay drafts; the user validates
+  and sends them in Odoo.
 - Protected models: `ir.*`, `base.*`, `res.users*`, `res.groups`, `res.company`, `res.config*`,
   `bus.*`, `iap.*`, mail servers, payment providers, accounting journals, chart of accounts, taxes.
 - Protected fields: passwords, API keys, secrets, tokens, TOTP, signup, groups, `share`, `state`,
@@ -75,5 +79,6 @@ field printed for the customer, in this order:
 
 ## 7. What the skill will not protect you from
 - Odoo automations (server actions, automated rules) triggered by a legitimate write.
-- Business actions you allow-list: `action_quotation_send` sends an email, `action_post` posts an
-  invoice. Only allow-list what you are comfortable delegating.
+- Business actions you allow-list: `action_quotation_send` sends an email, `action_confirm`
+  confirms an order. Only allow-list what you are comfortable delegating. (Posting and sending
+  invoices is blocked whatever you allow-list.)

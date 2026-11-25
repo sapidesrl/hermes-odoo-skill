@@ -85,6 +85,7 @@ try to work around it), `4` Odoo/network error.
 | Mass-edit cap | At most `ODOO_HERMES_MAX_WRITE` records per operation (default 25, hard max 200) |
 | Safe relations | many2many/one2many values only *add* links/lines; delete (2) and clear (5) commands are refused |
 | Allow-listed actions | Business methods (`action_confirm`...) only if the owner lists them in `ODOO_HERMES_ALLOWED_METHODS` |
+| No invoice validation | `action_post` and invoice sending methods (`action_send_and_print`, `action_invoice_sent`...) are hard-blocked, even if allow-listed: invoices stay drafts |
 | Local files | `export` never overwrites an existing file |
 | Traceability | Every record created by `create` / `activity` carries the marker `MadeByHermes` (see below) |
 

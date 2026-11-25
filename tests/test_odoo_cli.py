@@ -369,6 +369,20 @@ class CliTest(unittest.TestCase):
             self.assertEqual(code, 3)
             self.assertIn("protected", err)
 
+    def test_invoice_validation_and_sending_always_blocked(self):
+        self.writes_on()
+        methods = ("action_post", "action_send_and_print", "action_invoice_sent", "action_invoice_send")
+        os.environ["ODOO_HERMES_ALLOWED_METHODS"] = ",".join(methods)  # even when allow-listed
+        for method in methods:
+            code, _, err = self.run_cli("call", "account.move", method, "--ids", "1", "--apply")
+            self.assertEqual(code, 3, method)
+            self.assertIn("never validates", err)
+            code, _, err = self.run_cli("call", "account.move", method, "--ids", "1")  # dry-run too
+            self.assertEqual(code, 3, method)
+        self.assertFalse(set(methods) & set(self.methods_called()))
+        self.assertEqual(self.fake.data["account.move"][1]["state"], "draft")
+        self.assertFalse(odoo_cli.VALIDATION_BLOCKED_METHOD_RE.search("message_post"))  # chatter is not validation
+
     def test_export_never_overwrites(self):
         target = Path(self.tmp.name) / "out.csv"
         code, _, _ = self.run_cli("export", "res.partner", "--out", str(target))

@@ -68,6 +68,14 @@ HARD_BLOCKED_METHOD_RE = re.compile(
     re.I,
 )
 
+# Never callable either: validating (posting) or sending accounting documents.
+# Invoices created by the skill stay drafts; the user validates them in Odoo.
+VALIDATION_BLOCKED_METHOD_RE = re.compile(
+    r"(action_post|button_post|action_invoice_sent|action_invoice_send|action_send_and_print|"
+    r"action_send_invoice|send_and_print|action_validate_invoice)",
+    re.I,
+)
+
 PROTECTED_MODEL_RE = re.compile(
     r"^(ir\.|base\.|res\.users|res\.groups|res\.company|res\.config|bus\.|"
     r"auth_|iap\.|mail\.server|fetchmail\.|payment\.provider|"
@@ -1628,13 +1636,17 @@ def cmd_call(client, cfg, args):
         res = client.call(args.model, method, ids=ids, **kwargs)
         emit(args, res, lambda: json.dumps(res, ensure_ascii=False, indent=2, default=str))
         return
+    if VALIDATION_BLOCKED_METHOD_RE.search(method):
+        raise SafetyError("Method %r is blocked: this skill never validates (posts) or sends invoices or other "
+                          "accounting documents, even if allow-listed. They stay drafts: the user validates "
+                          "them in Odoo." % method)
     if HARD_BLOCKED_METHOD_RE.search(method):
         raise SafetyError("Method %r is blocked: this skill never runs destructive or irreversible methods. "
                           "Use update/archive, or ask a human to do it in Odoo." % method)
     check_model_writable(cfg, args.model)
     if method not in cfg.allowed_methods:
         raise SafetyError("Method %r is not allow-listed. The owner can add it to ODOO_HERMES_ALLOWED_METHODS "
-                          "(comma-separated, e.g. action_confirm,action_post)." % method)
+                          "(comma-separated, e.g. action_confirm)." % method)
     if not ids:
         raise SafetyError("Business actions need --ids.")
     if len(ids) > cfg.max_write:
