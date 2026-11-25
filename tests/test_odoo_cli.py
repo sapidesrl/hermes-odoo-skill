@@ -494,6 +494,18 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertNotIn("Peppol", out)
 
+    def test_no_utcnow_deprecation(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            code, out, err = self.run_cli("pulse")
+            self.assertEqual(code, 0, err)
+            now = odoo_cli.expand_macro("@now")
+            later = odoo_cli.expand_macro("@now+1")
+        self.assertRegex(now, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")  # same format, naive UTC string for Odoo
+        self.assertRegex(later, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+        self.assertNotIn("+00:00", now + later)
+
     def test_export_never_overwrites(self):
         target = Path(self.tmp.name) / "out.csv"
         code, _, _ = self.run_cli("export", "res.partner", "--out", str(target))

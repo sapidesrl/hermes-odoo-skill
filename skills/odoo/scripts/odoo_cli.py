@@ -480,7 +480,7 @@ def expand_macro(token, client=None):
             n *= 7
         if unit in "dw":
             if name == "now":
-                return (dt.datetime.utcnow() + dt.timedelta(days=n)).strftime("%Y-%m-%d %H:%M:%S")
+                return (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=n)).strftime("%Y-%m-%d %H:%M:%S")
             base = base + dt.timedelta(days=n)
         else:
             months = n * (12 if unit == "y" else 1)
@@ -488,7 +488,7 @@ def expand_macro(token, client=None):
             y, mo = divmod(b.month - 1 + months, 12)
             base = b.replace(year=b.year + y, month=mo + 1, day=min(b.day, 28))
     if name == "now" and base is None:
-        return dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     return base.isoformat()
 
 
@@ -1072,7 +1072,7 @@ def cmd_pulse(client, cfg, args):
     today = dt.date.today().isoformat()
     soon = (dt.date.today() + dt.timedelta(days=7)).isoformat()
     month = dt.date.today().replace(day=1).isoformat()
-    now = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     sections = []
 
     def metric(section, label, fn):
