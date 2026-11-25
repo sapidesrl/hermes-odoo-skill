@@ -1,7 +1,7 @@
 ---
 name: odoo
 description: Connect to an Odoo ERP (v14 to v19+, Community, Enterprise or Odoo.sh/Online) and manage it safely - search and read any record, customer 360 views, business pulse, activities, chatter notes, and guarded create/update/archive with dry-run previews, a change journal and undo. Never deletes anything. Use whenever the user mentions Odoo, their ERP, CRM pipeline, quotations, sales orders, invoices, contacts, stock, projects or tasks stored in Odoo.
-version: 1.2.0
+version: 1.3.0
 author: Sapide SRL
 license: MIT
 platforms: [linux, macos, windows]
@@ -45,7 +45,7 @@ Run `doctor` first in a new conversation (or when something fails): it checks th
 the Odoo version, the user, installed apps, and whether writes are enabled.
 Add `--json` before or after any command to get machine-readable output.
 
-Exit codes: `0` ok, `2` bad input, `3` **refused by a safety rule** (explain it to the user, do not
+Exit codes: `0` ok, `2` bad input or feature not available (e.g. Peppol module not installed), `3` **refused by a safety rule** (explain it to the user, do not
 try to work around it), `4` Odoo/network error.
 
 ## The golden rules (non-negotiable)
@@ -87,6 +87,7 @@ try to work around it), `4` Odoo/network error.
 | Allow-listed actions | Business methods (`action_confirm`...) only if the owner lists them in `ODOO_HERMES_ALLOWED_METHODS` |
 | No invoice validation | `action_post` and invoice sending methods (`action_send_and_print`, `action_invoice_sent`...) are hard-blocked, even if allow-listed: invoices stay drafts |
 | Local files | `export` never overwrites an existing file |
+| Peppol check | `peppol-check` only refreshes the contact's Peppol status (Odoo's "Verify" button); it sends nothing. Its Odoo method is not callable through `call` |
 | Traceability | Every record created by `create` / `activity` carries the marker `MadeByHermes` (see below) |
 
 ## Command cheat-sheet
@@ -122,6 +123,13 @@ $ODOO pulse              # business heartbeat: sales this month, overdue invoice
 $ODOO todo --days 3      # my activities: LATE / today / upcoming
 $ODOO 360 "Acme Corp"    # customer 360: contact, last orders, unpaid invoices, opportunities, tickets, activities, messages
 $ODOO hygiene            # contact data-quality audit: missing emails/phones, duplicates, malformed emails
+```
+
+### Peppol (Odoo 18+, `account_peppol` installed)
+```bash
+$ODOO peppol-check 12 34        # dry-run: name, VAT, EAS:endpoint, current Peppol status
+$ODOO peppol-check 12 --apply   # like Odoo's "Verify" button: network lookup, updates only the Peppol status
+$ODOO get res.partner 12        # shows "Peppol: 0208:0568514822 – Valid" (also in `360`)
 ```
 
 ### Change things (dry-run first, then `--apply` after the user confirms)
@@ -199,6 +207,13 @@ build the `create account.move` preview with `move_type` and `invoice_line_ids`,
 then give the user the link so they review and **validate it themselves in Odoo**. Never post or send it.
 `undo` cannot remove a created invoice (that would mean deleting it): a draft the user does not want
 is deleted by the user in Odoo.
+
+**Peppol readiness** - before saying an invoice can go out via Peppol, run `peppol-check` on the
+customer (dry-run, then `--apply` after the user agrees). Statuses: `valid` (reachable and accepts the
+format), `not_valid` (not on Peppol), `not_valid_format` (on Peppol but does not accept the contact's
+e-invoice format), `not_verified` (not checked, or the contact's e-invoice format is not a Peppol one).
+A `valid` status does not mean the invoice is sent: sending stays done by the user in Odoo.
+Contacts without an EAS/endpoint are skipped: suggest the user fills them in on the contact form.
 
 **Dunning assistant** - find overdue invoices, group by partner, draft polite reminder emails
 **as text for the user to send**. Offer to log an internal `note` and an `activity` on each invoice

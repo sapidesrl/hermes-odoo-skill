@@ -130,6 +130,10 @@ class SafetyError(Exception):
     """An operation refused by the skill's safety rules."""
 
 
+class UsageError(Exception):
+    """The request cannot apply to this Odoo (e.g. a module is not installed). Exit code 2."""
+
+
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
@@ -946,6 +950,8 @@ def cmd_get(client, cfg, args):
         fields = [f for f, m in meta.items()
                   if m.get("type") not in ("binary", "one2many") and m.get("store", True)
                   and not f.startswith(("message_", "activity_", "website_message"))]
+    if args.model == "res.partner" and not args.fields and all(f in meta for f in PEPPOL_FIELDS):
+        fields += [f for f in PEPPOL_FIELDS if f not in fields]  # company-dependent: may not be "stored"
     recs = client.read(args.model, ids, fields)
     for r in recs:
         r["_link"] = client.link(args.model, r["id"])
@@ -959,6 +965,9 @@ def cmd_get(client, cfg, args):
                 if (v in (False, None, [], "")) and not args.show_empty:
                     continue
                 lines.append("  %-28s %s" % (f, fmt(v, 120)))
+            pl = peppol_line(meta, r) if args.model == "res.partner" else None
+            if pl:
+                lines.append("  Peppol: %s" % pl)
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks) or "(not found)"
     emit(args, recs, text)
@@ -1186,6 +1195,9 @@ def cmd_360(client, cfg, args):
     pmeta = client.fields("res.partner")
     want = [f for f in ["display_name", "email", "phone", "mobile", "street", "city", "country_id", "vat",
                         "user_id", "category_id", "customer_rank", "supplier_rank", "credit", "debit"] if f in pmeta]
+    peppol = all(f in pmeta for f in PEPPOL_FIELDS)
+    if peppol:
+        want += list(PEPPOL_FIELDS)
     partner = client.read("res.partner", [pid], want)[0]
     child = [["partner_id", "child_of", pid]]
     out = {"partner": partner, "link": client.link("res.partner", pid)}
@@ -1213,8 +1225,13 @@ def cmd_360(client, cfg, args):
     def text():
         lines = ["%s  (#%s)  %s" % (partner.get("display_name"), pid, out["link"])]
         for k in want[1:]:
+            if k in PEPPOL_FIELDS:
+                continue
             if partner.get(k) not in (False, None, [], ""):
                 lines.append("  %-14s %s" % (k, fmt(partner[k], 80)))
+        pl = peppol_line(pmeta, partner) if peppol else None
+        if pl:
+            lines.append("  Peppol: %s" % pl)
         titles = {"sales": "Last sales orders", "unpaid_invoices": "Unpaid invoices", "opportunities": "Opportunities",
                   "tickets": "Tickets", "activities": "Planned activities", "recent_messages": "Recent messages"}
         for key, title in titles.items():
@@ -1673,6 +1690,123 @@ def cmd_call(client, cfg, args):
          lambda: text() + "\nDone (journal %s).\n%s" % (entry, table(after, ["id"] + snap_fields)))
 
 
+# --------------------------------------------------------------------------
+# Peppol: the "Verify" button of a contact (account_peppol)
+# --------------------------------------------------------------------------
+
+# Only callable through the dedicated `peppol-check` command, never through
+# `call` (which stays subject to ODOO_HERMES_ALLOWED_METHODS). Odoo queries the
+# Peppol network (SML/SMP) and writes ONLY peppol_verification_state
+# (company-dependent), logging the change in the chatter. ensure_one().
+PEPPOL_CHECK_METHOD = "button_account_peppol_check_partner_endpoint"
+PEPPOL_FIELDS = ("peppol_eas", "peppol_endpoint", "peppol_verification_state")
+PEPPOL_STATE_LABELS = {
+    "not_verified": "Not verified",
+    "not_valid": "Not on Peppol",
+    "not_valid_format": "On Peppol, but does not accept the format",
+    "valid": "Valid",
+}
+
+
+def peppol_labels(meta):
+    labels = dict(PEPPOL_STATE_LABELS)
+    sel = (meta.get("peppol_verification_state") or {}).get("selection")
+    if isinstance(sel, list):
+        labels.update({k: v for k, v in sel if isinstance(k, str)})
+    return labels
+
+
+def peppol_line(meta, rec):
+    """'0208:0568514822 – Valid', or None if the record has no Peppol info."""
+    if not all(f in meta for f in PEPPOL_FIELDS) or "peppol_endpoint" not in rec:
+        return None
+    eas, endpoint, state = rec.get("peppol_eas"), rec.get("peppol_endpoint"), rec.get("peppol_verification_state")
+    if not (eas and endpoint):
+        return "(no Peppol address)"
+    return "%s:%s – %s" % (eas, endpoint, peppol_labels(meta).get(state, state or "Not verified"))
+
+
+def cmd_peppol_check(client, cfg, args):
+    meta = client.fields("res.partner")
+    if not all(f in meta for f in PEPPOL_FIELDS):
+        raise UsageError("Peppol is not available on this Odoo: the account_peppol module (Accounting > "
+                         "Settings > Peppol) is not installed, or this user cannot see its fields.")
+    ids = []
+    for raw in args.ids:
+        for x in re.split(r"[,\s]+", raw.strip()):
+            if x:
+                rid = int(x.lstrip("#"))
+                if rid not in ids:
+                    ids.append(rid)
+    if len(ids) > cfg.max_write:
+        raise SafetyError("That would check more than %d contacts (ODOO_HERMES_MAX_WRITE). Work in batches." % cfg.max_write)
+    check_model_writable(cfg, "res.partner")
+    labels = peppol_labels(meta)
+    fields = ["display_name", "vat"] + list(PEPPOL_FIELDS) if "vat" in meta else ["display_name"] + list(PEPPOL_FIELDS)
+    found = {r["id"]: r for r in client.read("res.partner", ids, fields)}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise SafetyError("Contact(s) not found or not accessible: %s" % ", ".join(map(str, missing)))
+    eligible = [i for i in ids if found[i].get("peppol_eas") and found[i].get("peppol_endpoint")]
+    skipped = [i for i in ids if i not in eligible]
+    label = lambda st: "%s (%s)" % (st or "not_verified", labels.get(st or "not_verified", st))
+
+    def describe(r):
+        addr = "%s:%s" % (r["peppol_eas"], r["peppol_endpoint"]) if r["id"] in eligible else "(no Peppol address)"
+        return "  #%s %s  vat=%s  peppol=%s  status=%s" % (
+            r["id"], r.get("display_name") or "", r.get("vat") or "-", addr, label(r.get("peppol_verification_state")))
+
+    def head():
+        lines = ["Peppol check of %d contact(s):" % len(ids)]
+        lines += [describe(found[i]) for i in ids]
+        if skipped:
+            lines.append("  skipped (no Peppol EAS/endpoint, nothing to check): %s" % ", ".join("#%s" % i for i in skipped))
+        return lines
+
+    data = {"contacts": [found[i] for i in ids], "eligible": eligible, "skipped": skipped}
+    if not args.apply:
+        def text():
+            lines = head()
+            if eligible:
+                lines.append("  would run the Odoo Peppol check (network lookup) on: %s" % ", ".join("#%s" % i for i in eligible))
+                lines.append("  It only updates each contact's Peppol status; nothing is sent.")
+            return "\n".join(lines) + (DRY if eligible else "\nNothing to check.")
+        emit(args, dict(data, dry_run=True), text)
+        return
+    check_apply_allowed(cfg)
+    if not eligible:
+        emit(args, dict(data, results=[]), "\n".join(head()) + "\nNothing to check.")
+        return
+    results, errors = [], []
+    for rid in eligible:  # the Odoo method calls ensure_one()
+        try:
+            client.call("res.partner", PEPPOL_CHECK_METHOD, ids=[rid])
+        except OdooError as e:
+            errors.append({"id": rid, "error": str(e)})
+            continue
+        after = client.read("res.partner", [rid], ["peppol_verification_state"])[0].get("peppol_verification_state")
+        results.append({"id": rid, "name": found[rid].get("display_name"),
+                        "before": found[rid].get("peppol_verification_state"), "after": after})
+    entry = None
+    if results:
+        entry = Journal(cfg).append({
+            "op": "peppol_check", "model": "res.partner", "ids": [r["id"] for r in results],
+            "before": {str(r["id"]): r["before"] for r in results},
+            "after": {str(r["id"]): r["after"] for r in results},
+            "url": cfg.url, "db": client.db, "uid": client.uid})
+    summary = Counter(r["after"] or "not_verified" for r in results)
+
+    def text():
+        lines = head() + ["", "Results:"]
+        lines += ["  #%s %s: %s -> %s" % (r["id"], r["name"] or "", label(r["before"]), label(r["after"])) for r in results]
+        lines += ["  #%s ERROR: %s" % (e["id"], e["error"]) for e in errors]
+        lines.append("\nSummary: " + ", ".join("%s=%d" % (k, summary.get(k, 0)) for k in PEPPOL_STATE_LABELS))
+        if entry:
+            lines.append("Journal entry %s. A 'valid' status does not send anything: the user sends invoices in Odoo." % entry)
+        return "\n".join(lines)
+    emit(args, dict(data, results=results, errors=errors, summary=dict(summary), journal=entry), text)
+
+
 def cmd_journal(client, cfg, args):
     j = Journal(cfg)
     if args.show:
@@ -1734,6 +1868,9 @@ def cmd_undo(client, cfg, args):
             return _set_active(client, cfg, ns, False)
         raise SafetyError("%s has no 'active' field, so undoing this creation would require deleting it, which this "
                           "skill never does. Ask a human to delete %s %s in Odoo if needed." % (model, model, e["ids"]))
+    if op == "peppol_check":
+        raise SafetyError("Entry %s is a Peppol check: it only refreshed a status computed by Odoo from the Peppol "
+                          "network, there is nothing to restore. Run `peppol-check` again if needed." % e["id"])
     raise SafetyError("Entry %s (%s) cannot be undone automatically: a human should review it in Odoo%s." % (
         e["id"], op, (" (%s)" % client.link(model, e["ids"][0])) if e.get("ids") else ""))
 
@@ -1878,6 +2015,9 @@ def build_parser():
     sp.add_argument("method")
     sp.add_argument("--ids")
     sp.add_argument("--kwargs", help="JSON object of keyword arguments")
+    sp = add("peppol-check", cmd_peppol_check, "verify contacts' Peppol endpoint like Odoo's 'Verify' button "
+             "[dry-run unless --apply]", [writes])
+    sp.add_argument("ids", nargs="+", help="res.partner id(s)")
     sp = add("journal", cmd_journal, "list applied changes (local, append-only)")
     sp.add_argument("--limit", type=int, default=20)
     sp.add_argument("--show")
@@ -1912,6 +2052,9 @@ def main(argv=None):
     except OdooError as e:
         print("ODOO ERROR: %s" % e, file=sys.stderr)
         return 4
+    except UsageError as e:
+        print("NOT AVAILABLE: %s" % e, file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         return 130
     except (ValueError, SyntaxError) as e:

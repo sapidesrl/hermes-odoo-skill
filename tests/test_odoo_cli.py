@@ -383,6 +383,97 @@ class CliTest(unittest.TestCase):
         self.assertEqual(self.fake.data["account.move"][1]["state"], "draft")
         self.assertFalse(odoo_cli.VALIDATION_BLOCKED_METHOD_RE.search("message_post"))  # chatter is not validation
 
+    # --------------------------------------------------------- peppol-check
+    PEPPOL = "button_account_peppol_check_partner_endpoint"
+
+    def peppol_calls(self):
+        return [c for c in self.fake.calls if c[1] == self.PEPPOL]
+
+    def test_peppol_dry_run_reads_only(self):
+        self.writes_on()
+        code, out, err = self.run_cli("peppol-check", "1", "3")
+        self.assertEqual(code, 0, err)
+        self.assertIn("0208:0568514822", out)
+        self.assertIn("vat=BE0568514822", out)
+        self.assertIn("status=not_verified (Not verified yet)", out)
+        self.assertIn("would run the Odoo Peppol check", out)
+        self.assertIn("DRY RUN", out)
+        self.assertEqual(self.peppol_calls(), [])
+        self.assertEqual(self.fake.data["res.partner"][1]["peppol_verification_state"], "not_verified")
+
+    def test_peppol_apply(self):
+        self.writes_on()
+        code, out, err = self.run_cli("peppol-check", "1", "3", "--apply")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([c[2][0] for c in self.peppol_calls()], [[1], [3]])  # one call per id
+        self.assertIn("#1 Acme Corp: not_verified (Not verified yet) -> valid (Valid)", out)
+        self.assertIn("#3 Globex: not_verified (Not verified yet) -> not_valid (Not valid)", out)
+        self.assertIn("valid=1", out)
+        self.assertIn("not_valid=1", out)
+        self.assertEqual(self.fake.data["res.partner"][1]["peppol_verification_state"], "valid")
+        _, out, _ = self.run_cli("--json", "journal")
+        entry = json.loads(out)[0]
+        self.assertEqual((entry["op"], entry["model"], entry["ids"]), ("peppol_check", "res.partner", [1, 3]))
+        full = json.loads(self.run_cli("--json", "journal", "--show", entry["id"])[1])
+        self.assertEqual(full["before"], {"1": "not_verified", "3": "not_verified"})
+        self.assertEqual(full["after"], {"1": "valid", "3": "not_valid"})
+        self.assertFalse({"create", "write"} & set(self.methods_called()))  # nothing created: no marker
+        # undo: clear refusal
+        code, _, err = self.run_cli("undo", entry["id"], "--apply")
+        self.assertEqual(code, 3)
+        self.assertIn("nothing to restore", err)
+        self.assertEqual(self.fake.data["res.partner"][1]["peppol_verification_state"], "valid")
+
+    def test_peppol_apply_needs_writes_enabled(self):
+        code, _, err = self.run_cli("peppol-check", "1", "--apply")
+        self.assertEqual(code, 3)
+        self.assertIn("Read-only", err)
+        self.assertEqual(self.peppol_calls(), [])
+
+    def test_peppol_skips_contacts_without_address(self):
+        self.writes_on()
+        code, out, err = self.run_cli("peppol-check", "1", "2", "--apply")
+        self.assertEqual(code, 0, err)
+        self.assertIn("skipped (no Peppol EAS/endpoint, nothing to check): #2", out)
+        self.assertEqual([c[2][0] for c in self.peppol_calls()], [[1]])
+        code, out, _ = self.run_cli("peppol-check", "2")
+        self.assertIn("Nothing to check", out)
+
+    def test_peppol_respects_cap(self):
+        self.writes_on()
+        os.environ["ODOO_HERMES_MAX_WRITE"] = "1"
+        code, _, err = self.run_cli("peppol-check", "1", "3", "--apply")
+        self.assertEqual(code, 3)
+        self.assertIn("more than 1", err)
+        self.assertEqual(self.peppol_calls(), [])
+
+    def test_peppol_method_not_open_through_call(self):
+        self.writes_on()
+        self.assertFalse(odoo_cli.HARD_BLOCKED_METHOD_RE.search(self.PEPPOL))
+        self.assertFalse(odoo_cli.VALIDATION_BLOCKED_METHOD_RE.search(self.PEPPOL))
+        code, _, err = self.run_cli("call", "res.partner", self.PEPPOL, "--ids", "1", "--apply")
+        self.assertEqual(code, 3)
+        self.assertIn("not allow-listed", err)
+        self.assertEqual(self.peppol_calls(), [])
+
+    def test_peppol_module_missing(self):
+        saved = {f: fake_odoo.FIELDS["res.partner"].pop(f) for f in odoo_cli.PEPPOL_FIELDS}
+        try:
+            code, out, err = self.run_cli("peppol-check", "1", "--apply")
+        finally:
+            fake_odoo.FIELDS["res.partner"].update(saved)
+        self.assertEqual(code, 2)
+        self.assertIn("account_peppol", err)
+        self.assertNotIn("Traceback", err + out)
+
+    def test_peppol_line_in_get_and_360(self):
+        _, out, _ = self.run_cli("get", "res.partner", "1")
+        self.assertIn("Peppol: 0208:0568514822 – Not verified yet", out)
+        _, out, _ = self.run_cli("360", "1")
+        self.assertIn("Peppol: 0208:0568514822 – Not verified yet", out)
+        _, out, _ = self.run_cli("get", "res.partner", "2")
+        self.assertIn("Peppol: (no Peppol address)", out)
+
     def test_export_never_overwrites(self):
         target = Path(self.tmp.name) / "out.csv"
         code, _, _ = self.run_cli("export", "res.partner", "--out", str(target))

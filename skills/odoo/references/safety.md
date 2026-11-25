@@ -77,7 +77,16 @@ field printed for the customer, in this order:
    text/html field;
 4. otherwise no marker, and the preview says so.
 
-## 7. What the skill will not protect you from
+## 7. Peppol check
+`peppol-check` runs Odoo's own "Verify" button (`button_account_peppol_check_partner_endpoint`)
+on each contact, one at a time. Odoo looks the endpoint up on the Peppol network and writes **only**
+the contact's `peppol_verification_state` (per company), logging it in the chatter. Nothing is sent,
+created or validated, so there is no MadeByHermes marker. It follows the usual write rules: dry-run
+by default, `ODOO_HERMES_ALLOW_WRITES=1` + `--apply`, cap, journal. It cannot be undone (it is a
+refreshed status, there is nothing to restore): run it again if needed. The method is only allowed
+through this dedicated command; `call` keeps refusing it unless the owner allow-lists it.
+
+## 8. What the skill will not protect you from
 - Odoo automations (server actions, automated rules) triggered by a legitimate write.
 - Business actions you allow-list: `action_quotation_send` sends an email, `action_confirm`
   confirms an order. Only allow-list what you are comfortable delegating. (Posting and sending

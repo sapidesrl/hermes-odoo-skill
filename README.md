@@ -16,6 +16,7 @@ Un skill pour [Hermes Agent](https://github.com/NousResearch/hermes-agent) qui c
 | 📈 **Pulse** | le « pouls » de l'entreprise en une commande : ventes du mois, devis ouverts, factures en retard, pipeline CRM, livraisons en retard, tâches en retard, tickets ouverts |
 | 👤 **Client 360** | tout sur un client sur un écran : coordonnées, dernières commandes, impayés, opportunités, tickets, activités, derniers messages |
 | ✅ **To-do** | mes activités en retard / du jour / à venir |
+| 📮 **Peppol** | vérifier si un client est joignable via Peppol (`peppol-check`, comme le bouton « Vérifier » d'Odoo) ; n'envoie rien |
 | 🧹 **Hygiène** | audit (lecture seule) de la qualité des contacts : emails/téléphones manquants, doublons, emails mal formés |
 | ✍️ **Agir** | créer, modifier, archiver/désarchiver, poster une note interne, planifier une activité, lancer une action métier autorisée |
 | ⏪ **Annuler** | chaque modification est journalisée avec les valeurs d'avant ; `undo` les restaure |

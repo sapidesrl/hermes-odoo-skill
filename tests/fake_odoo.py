@@ -11,6 +11,15 @@ FIELDS = {
         "phone": {"type": "char", "string": "Phone"},
         "zip": {"type": "char", "string": "Zip"},
         "comment": {"type": "html", "string": "Notes"},
+        "vat": {"type": "char", "string": "Tax ID"},
+        # account_peppol (Odoo 18+)
+        "peppol_eas": {"type": "selection", "string": "Peppol e-address (EAS)",
+                       "selection": [["0208", "Belgium Company Registry"], ["9925", "Belgium VAT"]]},
+        "peppol_endpoint": {"type": "char", "string": "Peppol Endpoint"},
+        "peppol_verification_state": {"type": "selection", "string": "Peppol status", "readonly": True, "store": False,
+                                      "selection": [["not_verified", "Not verified yet"], ["not_valid", "Not valid"],
+                                                    ["not_valid_format", "Cannot receive this format"],
+                                                    ["valid", "Valid"]]},
         "active": {"type": "boolean", "string": "Active"},
         "is_company": {"type": "boolean", "string": "Is company"},
         "type": {"type": "selection", "string": "Type", "selection": [["contact", "Contact"], ["invoice", "Invoice"]]},
@@ -73,11 +82,13 @@ class FakeOdoo:
         self.data = {
             "res.partner": {
                 1: {"name": "Acme Corp", "email": "info@acme.test", "phone": "111", "active": True, "is_company": True,
-                    "type": "contact", "parent_id": False, "category_id": [1], "zip": False},
+                    "type": "contact", "parent_id": False, "category_id": [1], "zip": False, "vat": "BE0568514822",
+                    "peppol_eas": "0208", "peppol_endpoint": "0568514822", "peppol_verification_state": "not_verified"},
                 2: {"name": "John Acme", "email": "john@acme.test", "phone": False, "active": True, "is_company": False,
                     "type": "contact", "parent_id": 1, "category_id": [], "zip": False},
                 3: {"name": "Globex", "email": "info@acme.test", "phone": "333", "active": True, "is_company": True,
-                    "type": "contact", "parent_id": False, "category_id": [], "zip": False},
+                    "type": "contact", "parent_id": False, "category_id": [], "zip": False,
+                    "peppol_eas": "0208", "peppol_endpoint": "000", "peppol_verification_state": "not_verified"},
                 4: {"name": "Old Ltd", "email": "bad-email", "phone": False, "active": False, "is_company": True,
                     "type": "contact", "parent_id": False, "category_id": [], "zip": False},
             },
@@ -258,6 +269,22 @@ class FakeOdoo:
             self.data["mail.message"][mid] = {"model": model, "res_id": args[0][0], "body": kw["body"],
                                               "message_type": "comment", "date": "2026-01-01 00:00:00"}
             return mid
+        if method == "button_account_peppol_check_partner_endpoint":
+            # Mimics account_peppol: ensure_one(), no-op without EAS/endpoint, SML/SMP lookup,
+            # writes only peppol_verification_state and logs it in the chatter; returns False.
+            ids = args[0]
+            if len(ids) != 1:
+                raise xmlrpc.client.Fault(1, "ValueError: Expected singleton: res.partner%s" % tuple(ids))
+            rec = self.data[model][ids[0]]
+            if not (rec.get("peppol_eas") and rec.get("peppol_endpoint")):
+                return False
+            old = rec.get("peppol_verification_state")
+            rec["peppol_verification_state"] = "valid" if rec["peppol_endpoint"] == "0568514822" else "not_valid"
+            mid = max(self.data["mail.message"] or {0: 0}) + 1
+            self.data["mail.message"][mid] = {"model": model, "res_id": ids[0], "message_type": "notification",
+                                              "body": "Peppol status: %s -> %s" % (old, rec["peppol_verification_state"]),
+                                              "date": "2026-01-01 00:00:00"}
+            return False
         if method == "action_bump":
             return None and True  # returns None -> server refuses to marshal
         raise xmlrpc.client.Fault(1, "fake: method %s not implemented" % method)
@@ -301,6 +328,9 @@ def start_json2(api_key="k3y"):
             self.wfile.write(raw)
 
         def do_POST(self):
+            if self.path.startswith("/xmlrpc/"):  # JSON-only server: XML-RPC probe gets a clean 404
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                return self._send(404, {"name": "NotFound", "message": "XML-RPC not served here"})
             body = _json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
             if self.path == "/web/webclient/version_info":
                 return self._send(200, {"jsonrpc": "2.0", "result": {"server_version": "19.0"}})
