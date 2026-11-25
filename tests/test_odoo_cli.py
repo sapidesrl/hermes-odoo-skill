@@ -293,6 +293,82 @@ class CliTest(unittest.TestCase):
         rid = json.loads(out)["ids"][0]
         self.assertEqual(self.fake.data["res.partner"][rid]["comment"], "<p>ByOurBot</p>")
 
+    # ------------------------------------------- draft invoices (move_type)
+    INVOICE = {"move_type": "out_invoice", "partner_id": 1, "ref": "PO-123", "invoice_date": "2026-11-24",
+               "invoice_line_ids": [{"product_id": 5, "quantity": 16, "price_unit": 700,
+                                     "name": "Consulting", "tax_ids": [1]}]}
+
+    def test_create_draft_invoice_with_lines(self):
+        self.writes_on()
+        code, out, err = self.run_cli("create", "account.move", "--values", json.dumps(self.INVOICE))
+        self.assertEqual(code, 0, err)
+        self.assertIn("DRY RUN", out)
+        for expected in ("move_type", "out_invoice", "Acme Corp #1", "invoice_line_ids", "1 command(s)",
+                         "+ new line:", "product_id=Consulting day #5", "quantity=16", "price_unit=700",
+                         "name=Consulting", "tax_ids=VAT 20% #1"):
+            self.assertIn(expected, out)
+        self.assertNotIn("create", self.methods_called())
+        code, out, err = self.run_cli("--json", "create", "account.move", "--values", json.dumps(self.INVOICE), "--apply")
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        rec = self.fake.data["account.move"][data["ids"][0]]
+        self.assertEqual(rec["move_type"], "out_invoice")
+        self.assertEqual(rec["invoice_line_ids"], [[0, 0, {"product_id": 5, "quantity": 16, "price_unit": 700,
+                                                           "name": "Consulting", "tax_ids": [[4, 1, 0]]}]])
+        self.assertNotIn("state", rec)  # created as a draft: nothing posted
+        self.assertNotIn("narration", rec)  # printed terms untouched; marker goes to the chatter
+        self.assertEqual(self.messages_on("account.move", data["ids"][0]), ["MadeByHermes"])
+        self.assertFalse({"action_post", "action_invoice_sent"} & set(self.methods_called()))
+        self.assertTrue(data["journal"])
+
+    def test_create_invoice_refuses_other_move_types(self):
+        self.writes_on()
+        for bad in ("entry", "out_receipt", "bogus"):
+            vals = dict(self.INVOICE, move_type=bad)
+            code, _, err = self.run_cli("create", "account.move", "--values", json.dumps(vals), "--apply")
+            self.assertEqual(code, 3, bad)
+            self.assertIn("move_type", err)
+        self.assertNotIn("create", self.methods_called())
+
+    def test_move_type_never_updatable(self):
+        self.writes_on()
+        code, _, err = self.run_cli("update", "account.move", "--ids", "1", "--set", "move_type=out_refund", "--apply")
+        self.assertEqual(code, 3)
+        self.assertIn("protected", err)
+        self.assertNotIn("write", self.methods_called())
+
+    def test_other_protected_fields_still_refused_on_create(self):
+        self.writes_on()
+        for field, value in (("state", "posted"), ("active", False), ("company_id", 1)):
+            vals = dict(self.INVOICE, **{field: value})
+            code, _, err = self.run_cli("create", "account.move", "--values", json.dumps(vals), "--apply")
+            self.assertEqual(code, 3, field)
+            self.assertIn("protected", err)
+        self.assertNotIn("create", self.methods_called())
+
+    def test_invoice_lines_are_validated(self):
+        self.writes_on()
+        # "@Name" resolution on the line model
+        vals = dict(self.INVOICE, invoice_line_ids=[{"product_id": "@Widget", "quantity": 1, "price_unit": 10}])
+        code, out, err = self.run_cli("--json", "create", "account.move", "--values", json.dumps(vals), "--apply")
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        line = self.fake.data["account.move"][data["ids"][0]]["invoice_line_ids"][0][2]
+        self.assertEqual(line["product_id"], 6)
+        self.assertTrue(any(n.startswith("invoice_line_ids: product_id") for n in data["notes"]))
+        # unknown line field, with a suggestion
+        vals = dict(self.INVOICE, invoice_line_ids=[{"product_id": 5, "quantiy": 1}])
+        code, _, err = self.run_cli("create", "account.move", "--values", json.dumps(vals))
+        self.assertEqual(code, 3)
+        self.assertIn("account.move.line", err)
+        self.assertIn("quantity", err)
+        # protected field inside a line, also with the explicit [0, 0, {...}] form
+        for lines in ([{"product_id": 5, "company_id": 1}], [[0, 0, {"product_id": 5, "company_id": 1}]]):
+            vals = dict(self.INVOICE, invoice_line_ids=lines)
+            code, _, err = self.run_cli("create", "account.move", "--values", json.dumps(vals))
+            self.assertEqual(code, 3)
+            self.assertIn("protected", err)
+
     def test_export_never_overwrites(self):
         target = Path(self.tmp.name) / "out.csv"
         code, _, _ = self.run_cli("export", "res.partner", "--out", str(target))

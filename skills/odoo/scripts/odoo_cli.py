@@ -84,6 +84,14 @@ PROTECTED_FIELDS = {
     "write_date", "__last_update", "company_id", "company_ids", "move_type",
 }
 
+# Protected fields that may be set ONLY when creating a record, and only to
+# these values. move_type lets the skill create draft invoices / credit notes
+# (without it Odoo creates a plain journal entry). Changing the type of an
+# existing document stays forbidden: update and undo keep refusing it.
+CREATE_ONLY_FIELDS = {
+    "move_type": {"out_invoice", "out_refund", "in_invoice", "in_refund"},
+}
+
 DEFAULT_MAX_WRITE = 25
 HARD_MAX_WRITE = 200
 
@@ -637,8 +645,10 @@ def check_model_writable(cfg, model):
         raise SafetyError("Model %s is protected: the skill never writes to it." % model)
 
 
-def check_fields_writable(fields):
+def check_fields_writable(fields, creating=False):
     for f in fields:
+        if creating and f in CREATE_ONLY_FIELDS:
+            continue  # value checked by check_create_only_values()
         if f in PROTECTED_FIELDS or PROTECTED_FIELD_RE.search(f):
             hint = ""
             if f == "active":
@@ -646,6 +656,13 @@ def check_fields_writable(fields):
             elif f == "state":
                 hint = " Use the business action (e.g. `call ... action_confirm`) instead."
             raise SafetyError("Field %r is protected and cannot be written.%s" % (f, hint))
+
+
+def check_create_only_values(vals):
+    for f, allowed in CREATE_ONLY_FIELDS.items():
+        if f in vals and vals[f] not in allowed:
+            raise SafetyError("%s=%r is not allowed. At creation it must be one of: %s (draft invoices "
+                              "and credit notes only)." % (f, vals[f], ", ".join(sorted(allowed))))
 
 
 def check_apply_allowed(cfg):
@@ -672,7 +689,18 @@ def resolve_name(client, relation, text):
     raise SafetyError("No %s record matches '@%s'." % (relation, text))
 
 
-def sanitize_x2many(client, field, ftype, relation, value):
+def _line_vals(client, field, relation, item, notes):
+    """Validate the values of a new/updated x2many line like a top-level record."""
+    if not isinstance(item, dict):
+        raise SafetyError("Line values in %s must be an object." % field)
+    check_fields_writable(item)
+    vals, n = prepare_vals(client, relation, item)
+    if notes is not None:
+        notes += ["%s: %s" % (field, x) for x in n]
+    return vals
+
+
+def sanitize_x2many(client, field, ftype, relation, value, notes=None):
     if not isinstance(value, list):
         raise SafetyError("Field %s (%s) expects a list." % (field, ftype))
     cmds = []
@@ -684,14 +712,17 @@ def sanitize_x2many(client, field, ftype, relation, value):
         elif isinstance(item, str):
             cmds.append([4, resolve_name(client, relation, item.lstrip("@")), 0])
         elif isinstance(item, dict):
-            cmds.append([0, 0, item])
+            cmds.append([0, 0, _line_vals(client, field, relation, item, notes)])
         elif isinstance(item, (list, tuple)) and item and isinstance(item[0], int):
             code = item[0]
             if code in (2, 5):
                 raise SafetyError("x2many command %d on %s is destructive and refused." % (code, field))
             if ftype == "one2many" and code not in (0, 1, 4):
                 raise SafetyError("Removing lines from one2many %s may delete them: refused." % field)
-            cmds.append(list(item))
+            item = list(item)
+            if code in (0, 1) and len(item) > 2:
+                item[2] = _line_vals(client, field, relation, item[2], notes)
+            cmds.append(item)
         else:
             raise SafetyError("Unsupported value %r in %s." % (item, field))
     return cmds
@@ -718,7 +749,7 @@ def prepare_vals(client, model, vals):
             elif isinstance(value, list) and len(value) == 2 and isinstance(value[0], int):
                 value = value[0]
         elif ftype in ("many2many", "one2many"):
-            value = sanitize_x2many(client, key, ftype, f.get("relation"), value)
+            value = sanitize_x2many(client, key, ftype, f.get("relation"), value, notes)
         elif ftype in ("date", "datetime") and isinstance(value, str) and value.startswith("@"):
             value = expand_macro(value, client)
             if ftype == "datetime" and len(value) == 10:
@@ -1318,6 +1349,40 @@ def add_marker(vals, field, ftype):
         vals[field] = current + " " + HERMES_MARKER if current else HERMES_MARKER
 
 
+def _label(client, meta, field, value):
+    """Human label for a value of `field`: many2one ids get their name."""
+    f = meta.get(field) or {}
+    if f.get("type") == "many2one" and isinstance(value, int) and not isinstance(value, bool):
+        return "%s #%s" % (_names(client, f["relation"], [value]).get(value) or "?", value)
+    if f.get("type") == "many2many" and isinstance(value, list):
+        ids = [c[1] for c in value if isinstance(c, list) and len(c) > 1 and c[0] == 4]
+        ids += [i for c in value if isinstance(c, list) and c and c[0] == 6 for i in c[2]]
+        names = _names(client, f["relation"], ids) if ids else {}
+        return ", ".join("%s #%s" % (names.get(i) or "?", i) for i in ids) or fmt(value, 60)
+    return fmt(value, 60)
+
+
+def describe_commands(client, relation, cmds):
+    """One readable line per x2many command, for previews."""
+    try:
+        meta = client.fields(relation) if relation else {}
+    except OdooError:
+        meta = {}
+    out = []
+    for c in cmds:
+        if not isinstance(c, list) or not c:
+            out.append(fmt(c, 100))
+        elif c[0] == 0:
+            out.append("+ new line: " + ", ".join("%s=%s" % (k, _label(client, meta, k, v)) for k, v in c[2].items()))
+        elif c[0] == 1:
+            out.append("~ update #%s: " % c[1] + ", ".join("%s=%s" % (k, _label(client, meta, k, v)) for k, v in c[2].items()))
+        elif c[0] == 4:
+            out.append("+ link #%s" % c[1])
+        else:
+            out.append(fmt(c, 100))
+    return out
+
+
 def cmd_create(client, cfg, args):
     check_model_writable(cfg, args.model)
     if args.values and args.values.strip().startswith("["):
@@ -1333,7 +1398,8 @@ def cmd_create(client, cfg, args):
     meta = client.fields(args.model)
     prepared, notes = [], []
     for raw in raw_list:
-        check_fields_writable(raw)
+        check_fields_writable(raw, creating=True)
+        check_create_only_values(raw)
         vals, n = prepare_vals(client, args.model, raw)
         prepared.append(vals)
         notes += n
@@ -1359,7 +1425,13 @@ def cmd_create(client, cfg, args):
     def text():
         lines = ["Create %d %s record(s):" % (len(prepared), args.model)]
         for v in prepared:
-            lines += ["  %-24s %s" % (k, fmt(val, 100)) for k, val in v.items()]
+            for k, val in v.items():
+                ftype = meta.get(k, {}).get("type")
+                if ftype in ("one2many", "many2many") and isinstance(val, list):
+                    lines.append("  %-24s %d command(s)" % (k, len(val)))
+                    lines += ["      " + d for d in describe_commands(client, meta[k].get("relation"), val)]
+                else:
+                    lines.append("  %-24s %s" % (k, _label(client, meta, k, val) if ftype == "many2one" else fmt(val, 100)))
             lines.append("  --")
         lines += ["  note: " + n for n in notes]
         if missing:

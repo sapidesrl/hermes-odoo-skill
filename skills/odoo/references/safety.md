@@ -33,7 +33,15 @@ below cannot be disabled by configuration.
 - Protected models: `ir.*`, `base.*`, `res.users*`, `res.groups`, `res.company`, `res.config*`,
   `bus.*`, `iap.*`, mail servers, payment providers, accounting journals, chart of accounts, taxes.
 - Protected fields: passwords, API keys, secrets, tokens, TOTP, signup, groups, `share`, `state`,
-  `active`, `company_id(s)`, `move_type`, audit fields.
+  `active`, `company_id(s)`, `move_type`, audit fields. They are refused by `create`, `update` and
+  `undo`, with one exception below. The same rule applies to the values of lines
+  (e.g. `invoice_line_ids`), which are also checked against the line model.
+- Create-only exception: `move_type` may be set **only when creating** an `account.move`, and only
+  to `out_invoice`, `out_refund`, `in_invoice` or `in_refund`, so the skill can create **draft**
+  invoices and credit notes (without it Odoo would create a plain journal entry). Changing the type of
+  an existing document is still refused. The skill never posts (`action_post`) or sends an invoice:
+  the user validates drafts in Odoo. Undoing such a creation is not automatic (it would mean
+  deleting the draft): the user deletes an unwanted draft in Odoo.
 - x2many: commands `2` (delete record) and `5` (clear all) are refused; one2many only accepts
   create/update/link (removing a line may delete it).
 - An empty `--where` (= every record) is refused for writes.
